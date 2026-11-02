@@ -1,0 +1,23 @@
+# --- Python build/cache artifacts ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environment ---
+.venv/
+
+# --- Tool caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Local scan data (indexes built from YOUR disk never get committed) ---
+*.db
+*.sqlite
+
+# --- Personal files ---
+*.pdf
