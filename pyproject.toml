@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orphic"
+version = "0.0.1"
+description = "Local-first filesystem intelligence engine: index storage, find duplicates provably, propose safe cleanup."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Mubarak Salaudeen" }]
+dependencies = []
