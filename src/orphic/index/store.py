@@ -190,6 +190,7 @@ class Index:
         *,
         full: bool = False,
         workers: int = 1,
+        processes: bool = False,
         on_progress: Callable[[int], None] | None = None,
     ) -> ScanSummary:
         """Scan root and replace its indexed state atomically."""
@@ -213,7 +214,7 @@ class Index:
         # One transaction per scan: a crash leaves the previous index untouched.
         self._connection.execute("BEGIN IMMEDIATE")
         try:
-            items = walker.scan(root_path, scan_id, cache, workers)
+            items = walker.scan(root_path, scan_id, cache, workers, processes)
             for count, item in enumerate(items, start=1):
                 if isinstance(item, ScanSkip):
                     skipped[item.reason] += 1

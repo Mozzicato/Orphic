@@ -1,6 +1,9 @@
+import shutil
+import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from orphic.cli.main import app
@@ -63,3 +66,18 @@ def test_dedup_reports_groups_and_saves_them(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Duplicate groups: 1" in result.stdout
     assert "Recoverable: 4 bytes" in result.stdout
+
+
+def test_installed_command_can_scan_with_processes(sample_tree: Path) -> None:
+    command = shutil.which("orphic")
+    if command is None:
+        pytest.skip("orphic is not on PATH")
+
+    completed = subprocess.run(
+        [command, "scan", str(sample_tree), "--workers", "2", "--processes"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Directories: 1" in completed.stdout

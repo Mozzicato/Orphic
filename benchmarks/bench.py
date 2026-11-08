@@ -55,33 +55,42 @@ def save(kind: str, rows: list[dict[str, object]]) -> None:
 
 
 def bench_scan(root: Path, repeats: int) -> None:
-    def count_entries(workers: int) -> int:
-        return sum(1 for _ in walker.scan(root, workers=workers))
+    def count_entries(workers: int, processes: bool) -> int:
+        return sum(1 for _ in walker.scan(root, workers=workers, processes=processes))
 
     print("Warming the filesystem cache...")
-    entries = count_entries(8)
+    entries = count_entries(8, False)
 
-    # Shuffled each round so no worker count always benefits from running later.
-    times: dict[int, list[float]] = {workers: [] for workers in WORKER_COUNTS}
+    configurations = [
+        (1, False),
+        *((workers, False) for workers in WORKER_COUNTS[1:]),
+        *((workers, True) for workers in WORKER_COUNTS[1:]),
+    ]
+    # Every setup runs in every round, shuffled, so background load hits them alike.
+    times: dict[tuple[int, bool], list[float]] = {setup: [] for setup in configurations}
     for _ in range(repeats):
-        for workers in random.sample(WORKER_COUNTS, len(WORKER_COUNTS)):
-            times[workers].append(timed(lambda count=workers: count_entries(count))[0])
+        for setup in random.sample(configurations, len(configurations)):
+            times[setup].append(timed(lambda chosen=setup: count_entries(*chosen))[0])
 
-    baseline = statistics.median(times[1])
+    baseline = statistics.median(times[(1, False)])
     rows: list[dict[str, object]] = []
-    for workers in WORKER_COUNTS:
-        median = statistics.median(times[workers])
+    for setup in configurations:
+        workers, processes = setup
+        median = statistics.median(times[setup])
         rows.append(
             {
+                "mode": "serial" if workers == 1 else "processes" if processes else "threads",
                 "workers": workers,
                 "entries": entries,
                 "repeats": repeats,
                 "median_seconds": round(median, 4),
+                "min_seconds": round(min(times[setup]), 4),
+                "max_seconds": round(max(times[setup]), 4),
                 "entries_per_second": round(entries / median),
-                "speedup_vs_1_worker": round(baseline / median, 2),
+                "speedup_vs_serial": round(baseline / median, 2),
             }
         )
-        print(rows[-1])
+        print(rows[-1], flush=True)
     save("scan", rows)
 
 

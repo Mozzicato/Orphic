@@ -298,3 +298,36 @@ def test_abandoning_a_concurrent_scan_shuts_it_down(sample_tree: Path) -> None:
 def test_zero_workers_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         list(scan(tmp_path, workers=0))
+
+
+@pytest.mark.parametrize("workers", [2, 4])
+def test_processes_find_the_same_entries_as_a_serial_scan(
+    tmp_path: Path, workers: int
+) -> None:
+    for branch in range(40):
+        directory = tmp_path / f"branch{branch}" / "leaf"
+        directory.mkdir(parents=True)
+        (directory / f"{branch}.txt").write_text("x" * branch)
+    # Windows can report a just-changed directory's mtime late, so pin them.
+    for path in tmp_path.rglob("*"):
+        os.utime(path, (1000, 1000))
+
+    serial = {item.path: item for item in scan(tmp_path, scan_id="s")}
+    parallel = {item.path: item for item in scan(tmp_path, "s", None, workers, True)}
+
+    assert parallel == serial
+
+
+def test_processes_report_a_missing_root_as_a_skip(tmp_path: Path) -> None:
+    items = list(scan(tmp_path / "missing", workers=2, processes=True))
+
+    assert [item.reason for item in skips(items)] == [SkipReason.VANISHED]
+
+
+def test_compact_round_trip_keeps_records_and_skips() -> None:
+    items: list[ScanItem] = [
+        FileRecord("/a/b.txt", "b.txt", ".txt", 7, 1.5, 2.5, False, True, "id"),
+        ScanSkip("/a/c", SkipReason.PERMISSION_DENIED, "denied", "id"),
+    ]
+
+    assert walker._expand([walker._compact(item) for item in items], "id") == items

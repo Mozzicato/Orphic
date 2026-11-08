@@ -62,8 +62,11 @@ def scan(
         bool, typer.Option("--full", help="Relist every directory.")
     ] = False,
     workers: Annotated[
-        int, typer.Option(min=1, help="Threads used to read directories.")
+        int, typer.Option(min=1, help="Workers used to read directories.")
     ] = 1,
+    processes: Annotated[
+        bool, typer.Option("--processes", help="Use processes instead of threads.")
+    ] = False,
     database: DatabaseOption = DEFAULT_DATABASE,
 ) -> None:
     """Scan a directory into the index and report what was found and skipped."""
@@ -73,6 +76,7 @@ def scan(
                 path,
                 full=full,
                 workers=workers,
+                processes=processes,
                 on_progress=lambda n: status.update(f"Scanned {n:,} entries..."),
             )
 

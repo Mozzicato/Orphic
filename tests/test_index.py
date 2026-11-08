@@ -288,7 +288,7 @@ def test_undecodable_name_is_recorded_as_an_error_not_a_crash(
     index: Index, tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def scan_with_bad_name(
-        root: str, scan_id: str, cache: Any, workers: int
+        root: str, scan_id: str, cache: Any, workers: int, processes: bool
     ) -> Iterator[ScanItem]:
         yield FileRecord(
             f"{root}/bad\udc80.txt", "bad\udc80.txt", ".txt", 1, 1.0, 1.0, False, False, scan_id
@@ -318,6 +318,16 @@ def test_incremental_scan_works_with_worker_threads(index: Index, tree: Path) ->
     index.record_scan(tree, workers=4)
 
     summary = index.record_scan(tree, workers=4)
+
+    assert summary.directories_reused == 3
+    assert summary.files == 4
+
+
+def test_incremental_scan_works_with_processes(index: Index, tree: Path) -> None:
+    age_directories(tree)
+    index.record_scan(tree, workers=2, processes=True)
+
+    summary = index.record_scan(tree, workers=2, processes=True)
 
     assert summary.directories_reused == 3
     assert summary.files == 4
