@@ -16,7 +16,6 @@ def test_version_prints_installed_version() -> None:
 
 
 def test_scan_accepts_directory(sample_tree: Path) -> None:
-    print(sample_tree)
     result = runner.invoke(app, ["scan", str(sample_tree)])
 
     assert result.exit_code == 0
@@ -30,7 +29,14 @@ def test_scan_rejects_missing_path(tmp_path: Path) -> None:
 
 
 def test_scan_rejects_file(sample_tree: Path) -> None:
-    print(sample_tree / "empty.txt")
     result = runner.invoke(app, ["scan", str(sample_tree / "empty.txt")])
 
     assert result.exit_code == 2
+
+
+def test_scan_reports_counts(sample_tree: Path) -> None:
+    result = runner.invoke(app, ["scan", str(sample_tree)])
+
+    assert "Files: 2  Directories: 1  Links: 0" in result.stdout
+    assert "Total size: 5 bytes" in result.stdout
+    assert "Skipped: 0" in result.stdout

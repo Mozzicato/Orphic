@@ -21,3 +21,6 @@ htmlcov/
 
 # --- Personal files ---
 *.pdf
+
+# --- Private interview prep ---
+prep/

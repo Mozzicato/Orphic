@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Mubarak Salaudeen" }]
-dependencies = ["typer>=0.12"]
+dependencies = ["typer>=0.12", "rich>=13"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
