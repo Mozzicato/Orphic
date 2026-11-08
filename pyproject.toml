@@ -12,5 +12,11 @@ requires-python = ">=3.12"
 authors = [{ name = "Mubarak Salaudeen" }]
 dependencies = ["typer>=0.12"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 orphic = "orphic.cli.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
