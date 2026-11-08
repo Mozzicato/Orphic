@@ -5,6 +5,8 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from orphic.cleanup.executor import execute, reconcile, restore
+from orphic.cleanup.planner import ProtectionPolicy, build_plan
 from orphic.dedup.engine import Strategy, find_duplicates
 from orphic.index.store import Index
 
@@ -15,6 +17,11 @@ DatabaseOption = Annotated[
     typer.Option("--db", envvar="ORPHIC_DB", help="Index database location."),
 ]
 DEFAULT_DATABASE = Path.home() / ".orphic" / "index.db"
+RecoveryOption = Annotated[
+    Path,
+    typer.Option("--recovery-dir", envvar="ORPHIC_RECOVERY", help="Where moved files go."),
+]
+DEFAULT_RECOVERY = Path.home() / ".orphic" / "recovery"
 
 
 def _show_version(requested: bool) -> None:
@@ -40,7 +47,9 @@ def main(
 
 def _open_index(database: Path) -> Index:
     database.parent.mkdir(parents=True, exist_ok=True)
-    return Index(database)
+    index = Index(database)
+    reconcile(index)
+    return index
 
 
 @app.command()
@@ -123,3 +132,52 @@ def dedup(
     typer.echo(f"Skipped: {stats.skipped.total():,}")
     for reason, count in sorted(stats.skipped.items()):
         typer.echo(f"  {reason}: {count:,}")
+
+
+@app.command()
+def clean(
+    execute_plan: Annotated[
+        bool, typer.Option("--execute", help="Move files. Without this, nothing changes.")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+    protect: Annotated[
+        list[Path] | None, typer.Option(help="Directory that must not be touched.")
+    ] = None,
+    database: DatabaseOption = DEFAULT_DATABASE,
+    recovery: RecoveryOption = DEFAULT_RECOVERY,
+) -> None:
+    """Plan moving duplicates to a recovery area. A dry run unless --execute is given."""
+    policy = ProtectionPolicy.with_defaults(str(path) for path in protect or [])
+    with _open_index(database) as index:
+        plan = build_plan(index.saved_duplicates(), policy, str(recovery))
+        typer.echo(f"Would move: {len(plan.moves):,} files, {plan.bytes_to_move:,} bytes")
+        typer.echo(f"Would keep: {len(plan.kept):,}")
+        typer.echo(f"Protected: {len(plan.protected):,}")
+
+        if not execute_plan:
+            typer.echo("Dry run: nothing was changed. Use --execute to move these files.")
+            return
+
+        if not yes:
+            typer.confirm(f"Move {len(plan.moves):,} files to {recovery}?", abort=True)
+        result = execute(plan, index, recovery)
+
+    typer.echo(f"Moved: {result.moved:,} files, {result.bytes_moved:,} bytes")
+    typer.echo(f"Batch: {result.batch}")
+    typer.echo(f"Skipped: {result.skipped.total():,}")
+    for reason, count in sorted(result.skipped.items()):
+        typer.echo(f"  {reason}: {count:,}")
+
+
+@app.command(name="restore")
+def restore_batch(
+    batch: Annotated[str, typer.Argument(help="Batch id printed by clean.")],
+    database: DatabaseOption = DEFAULT_DATABASE,
+) -> None:
+    """Put every file from a cleanup batch back where it was."""
+    with _open_index(database) as index:
+        result = restore(index, batch)
+
+    typer.echo(f"Restored: {result.restored:,}")
+    typer.echo(f"Conflicts (a new file is at that path): {result.conflicts:,}")
+    typer.echo(f"Failed: {result.failed:,}")

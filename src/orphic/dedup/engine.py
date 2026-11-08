@@ -79,7 +79,7 @@ def find_duplicates(
         groups = _partial_stage(groups, strategy, stats)
 
     results: list[DuplicateGroup] = []
-    digests: dict[Hashable, list[Candidate]] = defaultdict(list)
+    digests: dict[str, list[Candidate]] = defaultdict(list)
     for group in groups:
         digests.clear()
         for file in group:
@@ -88,7 +88,7 @@ def find_duplicates(
                 digests[digest].append(file)
         for digest, members in digests.items():
             if len(members) > 1:
-                results.append(_duplicate_group(str(digest), members))
+                results.append(_duplicate_group(digest, members))
 
     results.sort(key=lambda group: (-group.recoverable_bytes, group.hash))
     return results, stats

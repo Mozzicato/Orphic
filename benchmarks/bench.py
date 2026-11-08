@@ -15,7 +15,6 @@ import time
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import TypeVar
 
 from orphic.dedup.engine import Strategy, find_duplicates
 from orphic.index.store import Index
@@ -33,10 +32,8 @@ DEDUP_ORDER = (
 # Longer than the index's timestamp safety window, so directories can be reused.
 SETTLE_SECONDS = 3
 
-T = TypeVar("T")
 
-
-def timed(action: Callable[[], T]) -> tuple[float, T]:
+def timed[T](action: Callable[[], T]) -> tuple[float, T]:
     start = time.perf_counter()
     result = action()
     return time.perf_counter() - start, result
@@ -68,7 +65,7 @@ def bench_scan(root: Path, repeats: int) -> None:
     times: dict[int, list[float]] = {workers: [] for workers in WORKER_COUNTS}
     for _ in range(repeats):
         for workers in random.sample(WORKER_COUNTS, len(WORKER_COUNTS)):
-            times[workers].append(timed(lambda: count_entries(workers))[0])
+            times[workers].append(timed(lambda count=workers: count_entries(count))[0])
 
     baseline = statistics.median(times[1])
     rows: list[dict[str, object]] = []
@@ -128,7 +125,7 @@ def bench_dedup(root: Path, include_baseline: bool) -> None:
             if strategy is Strategy.HASH_EVERYTHING and not include_baseline:
                 continue
             elapsed, (groups, stats) = timed(
-                lambda: find_duplicates(candidates, strategy)
+                lambda chosen=strategy: find_duplicates(candidates, chosen)
             )
             seconds[strategy] = elapsed
             rows.append(

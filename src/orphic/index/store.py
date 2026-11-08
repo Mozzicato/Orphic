@@ -4,6 +4,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -51,6 +52,17 @@ CREATE TABLE IF NOT EXISTS duplicates (
     algorithm TEXT NOT NULL,
     position INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS operations (
+    id INTEGER PRIMARY KEY,
+    batch TEXT NOT NULL,
+    source TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(state);
 CREATE INDEX IF NOT EXISTS idx_duplicates_file ON duplicates(file_id);
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent);
 CREATE INDEX IF NOT EXISTS idx_files_scan ON files(scan_id);
@@ -83,6 +95,15 @@ MTIME_RESOLUTION_SECONDS = 2.0
 
 # Stored instead of a directory's mtime when listing it failed, so it never matches.
 UNTRUSTED_MTIME = -1.0
+
+
+class OperationState(StrEnum):
+    PLANNED = "planned"
+    MOVED = "moved"
+    RESTORED = "restored"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+    CONFLICT = "conflict"
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +303,35 @@ class Index:
             for group in members.values()
             if len(group) > 1
         ]
+
+    def log_operation(
+        self, batch: str, source: str, destination: str, hash_value: str, size: int
+    ) -> int:
+        cursor = self._connection.execute(
+            "INSERT INTO operations (batch, source, destination, hash, size, state, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (batch, source, destination, hash_value, size, OperationState.PLANNED, time.time()),
+        )
+        return int(cursor.lastrowid or 0)
+
+    def set_operation_state(self, operation: int, state: OperationState) -> None:
+        self._connection.execute(
+            "UPDATE operations SET state = ?, ts = ? WHERE id = ?",
+            (state, time.time(), operation),
+        )
+
+    def operations(
+        self, *, batch: str | None = None, state: OperationState | None = None
+    ) -> list[sqlite3.Row]:
+        return self._connection.execute(
+            "SELECT * FROM operations "
+            "WHERE (:batch IS NULL OR batch = :batch) AND (:state IS NULL OR state = :state) "
+            "ORDER BY id",
+            {"batch": batch, "state": state},
+        ).fetchall()
+
+    def forget_file(self, path: str) -> None:
+        self._connection.execute("DELETE FROM files WHERE path = ?", (path,))
 
     def scans(self) -> list[sqlite3.Row]:
         return self._connection.execute(
