@@ -40,3 +40,12 @@ def test_scan_reports_counts(sample_tree: Path) -> None:
     assert "Files: 2  Directories: 1  Links: 0" in result.stdout
     assert "Total size: 5 bytes" in result.stdout
     assert "Skipped: 0" in result.stdout
+
+
+def test_largest_reads_from_the_index_without_rescanning(sample_tree: Path) -> None:
+    runner.invoke(app, ["scan", str(sample_tree)])
+
+    result = runner.invoke(app, ["largest", "--limit", "1"])
+
+    assert result.exit_code == 0
+    assert "notes.txt" in result.stdout
