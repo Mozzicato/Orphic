@@ -1,6 +1,7 @@
 import os
 import stat
 from collections.abc import Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -47,12 +48,17 @@ def scan(
     root: str | Path,
     scan_id: str | None = None,
     cache: DirectoryCache | None = None,
+    workers: int = 1,
 ) -> Iterator[ScanItem]:
     """Yield every entry under root, and a ScanSkip for anything unreadable."""
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
     current_scan = scan_id or uuid4().hex
     # Explicit stacks, because recursion would be capped by tree depth.
     to_list = [str(root)]
     to_check: list[str] = []
+    in_flight: set[Future[list[ScanItem]]] = set()
+    pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
 
     def route(record: FileRecord) -> None:
         if not record.is_directory or record.is_symlink:
@@ -63,36 +69,58 @@ def scan(
         else:
             to_check.extend(known)
 
-    while to_list or to_check:
-        if to_check:
-            path = to_check.pop()
-            try:
-                record = _record_from_path(path, current_scan)
-            except OSError as error:
-                yield _skip(path, error, current_scan)
+    try:
+        while to_list or to_check or in_flight:
+            if to_check:
+                path = to_check.pop()
+                try:
+                    record = _record_from_path(path, current_scan)
+                except OSError as error:
+                    yield _skip(path, error, current_scan)
+                    continue
+                # Route before yielding: the consumer may overwrite what the cache reads.
+                route(record)
+                yield record
                 continue
-            # Route before yielding: the consumer may overwrite what the cache reads.
-            route(record)
-            yield record
-            continue
 
-        directory = to_list.pop()
-        entries: list[os.DirEntry[str]] = []
+            if pool is None:
+                batches = [_read_directory(to_list.pop(), current_scan)]
+            else:
+                # Bounded, so a huge tree cannot queue unlimited work.
+                while to_list and len(in_flight) < workers * 2:
+                    in_flight.add(
+                        pool.submit(_read_directory, to_list.pop(), current_scan)
+                    )
+                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+                batches = [future.result() for future in done]
+
+            # Only this thread touches the cache: its SQLite connection is not shared.
+            for items in batches:
+                for item in items:
+                    if isinstance(item, FileRecord):
+                        route(item)
+                    yield item
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _read_directory(directory: str, scan_id: str) -> list[ScanItem]:
+    entries: list[os.DirEntry[str]] = []
+    items: list[ScanItem] = []
+    try:
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                entries.append(entry)
+    except OSError as error:
+        items.append(_skip(directory, error, scan_id))
+
+    for entry in entries:
         try:
-            with os.scandir(directory) as iterator:
-                for entry in iterator:
-                    entries.append(entry)
+            items.append(_record(entry, scan_id))
         except OSError as error:
-            yield _skip(directory, error, current_scan)
-
-        for entry in entries:
-            try:
-                record = _record(entry, current_scan)
-            except OSError as error:
-                yield _skip(entry.path, error, current_scan)
-                continue
-            route(record)
-            yield record
+            items.append(_skip(entry.path, error, scan_id))
+    return items
 
 
 def _record(entry: os.DirEntry[str], scan_id: str) -> FileRecord:

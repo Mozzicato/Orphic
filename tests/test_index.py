@@ -287,7 +287,9 @@ def test_interrupted_scan_does_not_count_as_a_trusted_baseline(
 def test_undecodable_name_is_recorded_as_an_error_not_a_crash(
     index: Index, tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def scan_with_bad_name(root: str, scan_id: str, cache: Any) -> Iterator[ScanItem]:
+    def scan_with_bad_name(
+        root: str, scan_id: str, cache: Any, workers: int
+    ) -> Iterator[ScanItem]:
         yield FileRecord(
             f"{root}/bad\udc80.txt", "bad\udc80.txt", ".txt", 1, 1.0, 1.0, False, False, scan_id
         )
@@ -309,3 +311,13 @@ def test_queries(index: Index, tree: Path) -> None:
     assert paths(index.oldest(1)) == ["top.txt"]
     assert "three.txt" not in paths(index.newest(1))
     assert paths(index.by_extension(".LOG")) == ["two.log"]
+
+
+def test_incremental_scan_works_with_worker_threads(index: Index, tree: Path) -> None:
+    age_directories(tree)
+    index.record_scan(tree, workers=4)
+
+    summary = index.record_scan(tree, workers=4)
+
+    assert summary.directories_reused == 3
+    assert summary.files == 4

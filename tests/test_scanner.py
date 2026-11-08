@@ -235,3 +235,66 @@ def test_files_deleted_during_scan_never_crash_it(tmp_path: Path) -> None:
     deleter.join()
 
     assert len(items) <= len(files)
+
+
+@pytest.mark.parametrize("workers", [1, 2, 4, 16])
+def test_every_worker_count_finds_the_same_entries(tmp_path: Path, workers: int) -> None:
+    for branch in range(6):
+        directory = tmp_path / f"branch{branch}" / "leaf"
+        directory.mkdir(parents=True)
+        (directory / f"{branch}.txt").touch()
+
+    found = sorted(item.path for item in scan(tmp_path, workers=workers))
+
+    assert found == sorted(str(path) for path in tmp_path.rglob("*"))
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_failures_are_skips_at_any_worker_count(
+    sample_tree: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    real_scandir = os.scandir
+    blocked = str(sample_tree / "docs")
+
+    def fake_scandir(path: str) -> Any:
+        if path == blocked:
+            raise PermissionError(13, "denied", path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(walker.os, "scandir", fake_scandir)
+
+    items = list(scan(sample_tree, workers=workers))
+
+    assert [s.reason for s in skips(items)] == [SkipReason.PERMISSION_DENIED]
+
+
+def test_directories_really_are_read_in_parallel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    both_running = threading.Barrier(2, timeout=10)
+    real_scandir = os.scandir
+
+    def waiting_scandir(path: str) -> Any:
+        if path != str(tmp_path):
+            both_running.wait()
+        return real_scandir(path)
+
+    monkeypatch.setattr(walker.os, "scandir", waiting_scandir)
+
+    assert len(list(scan(tmp_path, workers=2))) == 2
+
+
+def test_abandoning_a_concurrent_scan_shuts_it_down(sample_tree: Path) -> None:
+    iterator = scan(sample_tree, workers=4)
+    next(iterator)
+
+    iterator.close()
+
+    assert list(iterator) == []
+
+
+def test_zero_workers_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        list(scan(tmp_path, workers=0))
