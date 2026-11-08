@@ -49,3 +49,17 @@ def test_largest_reads_from_the_index_without_rescanning(sample_tree: Path) -> N
 
     assert result.exit_code == 0
     assert "notes.txt" in result.stdout
+
+
+def test_dedup_reports_groups_and_saves_them(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.txt").write_text("same")
+    (root / "b.txt").write_text("same")
+    runner.invoke(app, ["scan", str(root)])
+
+    result = runner.invoke(app, ["dedup"])
+
+    assert result.exit_code == 0
+    assert "Duplicate groups: 1" in result.stdout
+    assert "Recoverable: 4 bytes" in result.stdout

@@ -5,6 +5,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from orphic.dedup.engine import Strategy, find_duplicates
 from orphic.index.store import Index
 
 app = typer.Typer(no_args_is_help=True)
@@ -83,3 +84,38 @@ def largest(
     with _open_index(database) as index:
         for row in index.largest(limit):
             typer.echo(f"{row['size']:>15,}  {row['path']}")
+
+
+@app.command()
+def dedup(
+    strategy: Annotated[
+        Strategy, typer.Option(help="How candidates are narrowed before full hashing.")
+    ] = Strategy.SIZE_FIRST,
+    limit: Annotated[int, typer.Option(help="How many groups to show.")] = 10,
+    database: DatabaseOption = DEFAULT_DATABASE,
+) -> None:
+    """Find files with identical content among the indexed files."""
+    with _open_index(database) as index:
+        with Console(stderr=True).status("Hashing candidates..."):
+            groups, stats = find_duplicates(index.candidates(), strategy)
+        index.save_duplicates(groups)
+
+    for number, group in enumerate(groups[:limit], start=1):
+        typer.echo(f"Duplicate Group #{number}")
+        typer.echo(f"Original candidate: {group.original.path}")
+        typer.echo(f"Duplicates: {', '.join(f.path for f in group.duplicates)}")
+        typer.echo(f"Recoverable: {group.recoverable_bytes:,} bytes")
+        typer.echo("")
+
+    typer.echo(f"Duplicate groups: {len(groups):,}")
+    typer.echo(f"Recoverable: {sum(g.recoverable_bytes for g in groups):,} bytes")
+    typer.echo(
+        f"Files considered: {stats.files_considered:,}  "
+        f"Fully hashed: {stats.full_hashed:,} "
+        f"({stats.full_hash_skip_ratio:.1%} skipped)"
+    )
+    typer.echo(f"Files opened: {stats.files_opened:,}  Bytes read: {stats.bytes_read:,}")
+    typer.echo(f"Hard links ignored: {stats.hard_links:,}")
+    typer.echo(f"Skipped: {stats.skipped.total():,}")
+    for reason, count in sorted(stats.skipped.items()):
+        typer.echo(f"  {reason}: {count:,}")

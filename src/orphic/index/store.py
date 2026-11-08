@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import Self
 from uuid import uuid4
 
+from orphic.dedup.engine import HASH_ALGORITHM, Candidate, DuplicateGroup
 from orphic.scanner import walker
 from orphic.scanner.walker import FileRecord, ScanSkip
 
@@ -43,6 +44,14 @@ CREATE TABLE IF NOT EXISTS errors (
     message TEXT NOT NULL,
     ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS duplicates (
+    group_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    hash TEXT NOT NULL,
+    algorithm TEXT NOT NULL,
+    position INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_duplicates_file ON duplicates(file_id);
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent);
 CREATE INDEX IF NOT EXISTS idx_files_scan ON files(scan_id);
 CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
@@ -231,6 +240,47 @@ class Index:
             "AND extension = ? ORDER BY size DESC, path",
             (extension.lower(), limit),
         )
+
+    def candidates(self) -> list[Candidate]:
+        rows = self._connection.execute(
+            "SELECT id, path, size, mtime FROM files "
+            "WHERE is_directory = 0 AND is_symlink = 0 AND size > 0"
+        )
+        return [Candidate(r["id"], r["path"], r["size"], r["mtime"]) for r in rows]
+
+    def save_duplicates(self, groups: list[DuplicateGroup]) -> None:
+        with self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute("DELETE FROM duplicates")
+            self._connection.executemany(
+                "INSERT INTO duplicates (group_id, file_id, hash, algorithm, position) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    (group_id, file.file_id, group.hash, HASH_ALGORITHM, position)
+                    for group_id, group in enumerate(groups, start=1)
+                    for position, file in enumerate(group.files)
+                ),
+            )
+
+    def saved_duplicates(self) -> list[DuplicateGroup]:
+        rows = self._connection.execute(
+            "SELECT d.group_id, d.hash, f.id, f.path, f.size, f.mtime "
+            "FROM duplicates d JOIN files f ON f.id = d.file_id "
+            "ORDER BY d.group_id, d.position"
+        ).fetchall()
+        members: dict[int, list[sqlite3.Row]] = {}
+        for row in rows:
+            members.setdefault(row["group_id"], []).append(row)
+        return [
+            DuplicateGroup(
+                hash=group[0]["hash"],
+                files=tuple(
+                    Candidate(r["id"], r["path"], r["size"], r["mtime"]) for r in group
+                ),
+            )
+            for group in members.values()
+            if len(group) > 1
+        ]
 
     def scans(self) -> list[sqlite3.Row]:
         return self._connection.execute(
