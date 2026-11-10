@@ -1,0 +1,3 @@
+date,os,python,strategy,files_indexed,total_gb,seconds,duplicate_groups,files_opened,fully_hashed,skip_full_hash_percent,gb_read,skipped_files
+2026-11-09,Windows-11-10.0.26300-SP0,3.12.10,size-first,327772,12.87,17441.968,49180,349028,278238,14.6,4.204,0
+2026-11-09,Windows-11-10.0.26300-SP0,3.12.10,size-first-last,327772,12.87,14413.944,49180,327056,290219,10.9,4.271,0

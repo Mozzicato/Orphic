@@ -151,7 +151,8 @@ def bench_dedup(root: Path, include_baseline: bool) -> None:
                     "skipped_files": stats.skipped.total(),
                 }
             )
-            print(rows[-1])
+            print(rows[-1], flush=True)
+            save("dedup", rows)
 
     if include_baseline:
         baseline = seconds[Strategy.HASH_EVERYTHING]
