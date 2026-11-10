@@ -331,3 +331,32 @@ def test_incremental_scan_works_with_processes(index: Index, tree: Path) -> None
 
     assert summary.directories_reused == 3
     assert summary.files == 4
+
+
+def test_repeated_incremental_scans_keep_untouched_files(index: Index, tree: Path) -> None:
+    age_directories(tree)
+    index.record_scan(tree)
+
+    # Rows under reused directories keep an older scan_id; they must survive
+    # several incremental scans, not only the first.
+    for _ in range(3):
+        summary = index.record_scan(tree)
+        assert summary.directories_reused == 3
+        assert summary.files == 4
+
+    assert sorted(paths(index.largest(10))) == ["one.txt", "three.txt", "top.txt", "two.log"]
+
+
+def test_incremental_scan_drops_a_file_from_a_changed_directory(
+    index: Index, tree: Path
+) -> None:
+    age_directories(tree)
+    index.record_scan(tree)
+    index.record_scan(tree)
+
+    (tree / "a" / "one.txt").unlink()
+    os.utime(tree / "a", (1_000_000_100.0, 1_000_000_100.0))
+    summary = index.record_scan(tree)
+
+    assert summary.files == 3
+    assert "one.txt" not in paths(index.largest(10))

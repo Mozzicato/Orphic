@@ -118,16 +118,8 @@ class ScanSummary:
 
 
 class _UnchangedDirectories:
-    def __init__(
-        self,
-        connection: sqlite3.Connection,
-        scan_id: str,
-        now: float,
-        trusted_before: float,
-    ) -> None:
+    def __init__(self, connection: sqlite3.Connection, trusted_before: float) -> None:
         self._connection = connection
-        self._scan_id = scan_id
-        self._now = now
         self._trusted_before = trusted_before
         self.reused = 0
 
@@ -144,10 +136,11 @@ class _UnchangedDirectories:
             return None
 
         self.reused += 1
+        # Remember the directory instead of rewriting its children: rows under a
+        # kept directory survive the stale-row cleanup without being touched.
         self._connection.execute(
-            f"UPDATE files SET scan_id = ?, last_seen = ? "
-            f"WHERE parent = ? AND NOT ({IS_REAL_DIRECTORY})",
-            (self._scan_id, self._now, directory.path),
+            "INSERT OR IGNORE INTO temp.kept_directories (path) VALUES (?)",
+            (directory.path,),
         )
         rows = self._connection.execute(
             f"SELECT path FROM files WHERE parent = ? AND {IS_REAL_DIRECTORY}",
@@ -204,11 +197,13 @@ class Index:
             (scan_id, root_path, now),
         )
 
+        self._connection.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS kept_directories (path TEXT PRIMARY KEY)"
+        )
+        self._connection.execute("DELETE FROM temp.kept_directories")
         cache = None
         if not full and trusted_before is not None:
-            cache = _UnchangedDirectories(
-                self._connection, scan_id, now, trusted_before
-            )
+            cache = _UnchangedDirectories(self._connection, trusted_before)
         skipped: Counter[str] = Counter()
 
         # One transaction per scan: a crash leaves the previous index untouched.
@@ -229,9 +224,14 @@ class Index:
                 if on_progress and count % 1000 == 0:
                     on_progress(count)
 
+            # Stale: written by an earlier scan of this root and not vouched for by a
+            # kept directory. Real directories are always revisited, so an old one
+            # was not seen again.
             self._connection.execute(
-                "DELETE FROM files WHERE scan_id != ? AND scan_id IN "
-                "(SELECT id FROM scans WHERE root_path = ?)",
+                f"DELETE FROM files WHERE scan_id != ? AND scan_id IN "
+                f"(SELECT id FROM scans WHERE root_path = ?) "
+                f"AND (parent NOT IN (SELECT path FROM temp.kept_directories) "
+                f"OR ({IS_REAL_DIRECTORY}))",
                 (scan_id, root_path),
             )
             self._connection.execute(
@@ -247,7 +247,7 @@ class Index:
             )
             raise
 
-        return self._summary(scan_id, cache.reused if cache else 0, skipped)
+        return self._summary(scan_id, root_path, cache.reused if cache else 0, skipped)
 
     def largest(self, limit: int = 10) -> list[sqlite3.Row]:
         return self._files("ORDER BY size DESC, path", (limit,))
@@ -406,7 +406,7 @@ class Index:
         )
 
     def _summary(
-        self, scan_id: str, reused: int, skipped: Counter[str]
+        self, scan_id: str, root_path: str, reused: int, skipped: Counter[str]
     ) -> ScanSummary:
         row = self._connection.execute(
             f"""
@@ -416,9 +416,9 @@ class Index:
                 COALESCE(SUM(is_directory = 0 AND is_symlink = 0), 0) AS files,
                 COALESCE(SUM(CASE WHEN is_directory = 0 AND is_symlink = 0
                                   THEN size ELSE 0 END), 0) AS total_size
-            FROM files WHERE scan_id = ?
+            FROM files WHERE scan_id IN (SELECT id FROM scans WHERE root_path = ?)
             """,
-            (scan_id,),
+            (root_path,),
         ).fetchone()
         return ScanSummary(
             scan_id=scan_id,

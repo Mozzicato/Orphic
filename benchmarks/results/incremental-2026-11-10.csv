@@ -1,0 +1,2 @@
+date,os,python,files,directories,directories_reused,repeats,first_scan_seconds,full_rescan_median_seconds,incremental_median_seconds,reduction_percent
+2026-11-10,Windows-11-10.0.26300-SP0,3.12.10,753394,96777,96581,5,212.6199,161.7735,51.7505,68.0
